@@ -1,0 +1,17 @@
+{
+  "homepage": "https://example.com",
+  "maintainers": [
+    {
+      "github": "SwayZGl1tZyy",
+      "github_user_id": 117121150,
+      "name": "PoC Maintainer"
+    }
+  ],
+  "repository": [
+    "github:SwayZGl1tZyyy/bazel-central-registry"
+  ],
+  "versions": [
+    "1.0.0"
+  ],
+  "yanked_versions": {}
+}

@@ -1,0 +1,6 @@
+module(
+    name = "pocmod",
+    version = "1.0.1",
+)
+
+# C1: benign content reviewed by the module maintainer

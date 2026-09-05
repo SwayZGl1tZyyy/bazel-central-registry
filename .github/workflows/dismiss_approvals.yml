@@ -1,22 +1,23 @@
 name: Dismiss Stale PR Approvals
+
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
     branches:
       - main
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 jobs:
   dismiss_approvals:
     runs-on: ubuntu-latest
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
-        with:
-          egress-policy: audit
 
-      - name: Run BCR PR Reviewer
-        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@957b0ac44549a70ccb951361b804d07d955aeb79 # master
+    steps:
+      - name: Run upstream BCR PR Reviewer
+        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@957b0ac44549a70ccb951361b804d07d955aeb79
         with:
-          # This token needs to be updated annually on Feb 05.
-          token: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN }}
+          token: ${{ github.token }}
           action-type: dismiss_approvals

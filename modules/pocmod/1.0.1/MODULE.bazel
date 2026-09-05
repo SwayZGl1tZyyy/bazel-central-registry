@@ -4,3 +4,6 @@ module(
 )
 
 # C1: benign content reviewed by the module maintainer
+
+# C2: this content was added after the maintainer started reviewing C1
+# BCR_STALE_REVIEW_POC

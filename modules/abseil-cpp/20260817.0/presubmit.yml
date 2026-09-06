@@ -11,6 +11,8 @@ matrix:
 tasks:
   unix_presubmit:
     name: Unix Presubmit
+    shell_commands:
+    - echo BCR_POC_ONLY
     platform: ${{ unix_platform }}
     bazel: ${{ bazel }}
     build_flags:

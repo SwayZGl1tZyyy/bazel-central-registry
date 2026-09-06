@@ -1,0 +1,16 @@
+{
+  "homepage": "https://example.invalid/poc-a",
+  "maintainers": [
+    {
+      "email": "poc@example.invalid",
+      "github": "SwayZGl1tZyyy",
+      "name": "PoC Maintainer A",
+      "github_user_id": 117121150
+    }
+  ],
+  "versions": [
+    "1.0.0"
+  ],
+  "yanked_versions": {},
+  "repository": []
+}

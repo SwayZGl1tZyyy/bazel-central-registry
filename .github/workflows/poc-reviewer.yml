@@ -1,0 +1,21 @@
+name: PoC - BCR Reviewer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  reviewer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run current upstream BCR reviewer
+        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@957b0ac44549a70ccb951361b804d07d955aeb79
+        with:
+          token: ${{ secrets.BCR_TEST_TOKEN }}
+          action-type: review_prs

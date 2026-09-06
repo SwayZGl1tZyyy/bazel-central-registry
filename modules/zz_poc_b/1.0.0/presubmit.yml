@@ -11,3 +11,5 @@ tasks:
     bazel: ${{ bazel }}
     build_targets:
       - "//..."
+    shell_commands:
+      - echo BCR_POC_ONLY

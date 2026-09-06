@@ -1,0 +1,11 @@
+module(
+    name = "pocmod",
+    version = "1.0.1",
+)
+
+# C1: benign content reviewed by the module maintainer
+
+# C2: this content was added after the maintainer started reviewing C1
+# BCR_STALE_REVIEW_POC
+
+# trigger

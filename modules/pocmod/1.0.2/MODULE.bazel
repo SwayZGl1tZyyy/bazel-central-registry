@@ -1,0 +1,7 @@
+module(
+    name = "pocmod",
+    version = "1.0.2",
+)
+
+# Commit A: benign content reviewed by the module maintainer.
+POC_STAGE = "A_REVIEWED"

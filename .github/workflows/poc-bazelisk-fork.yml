@@ -1,6 +1,11 @@
 name: PoC - BCR Bazelisk Fork Selector
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/poc-bazelisk-fork.yml
   workflow_dispatch:
 
 permissions:

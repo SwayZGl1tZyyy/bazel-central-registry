@@ -28,11 +28,11 @@ jobs:
 
       - name: Verify helper token is configured
         env:
-          HELPER_TOKEN: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN }}
+          HELPER_TOKEN: ${{ secrets.BCR_TEST_TOKEN }}
         shell: bash
         run: |
           if [[ -z "$HELPER_TOKEN" ]]; then
-            echo 'Missing repository secret BCR_PR_REVIEW_HELPER_TOKEN.' >&2
+            echo 'Missing repository secret BCR_TEST_TOKEN.' >&2
             exit 1
           fi
           echo 'Helper token secret is present.'

@@ -1,0 +1,2 @@
+module(name = "pocmod", version = "9.0.8")
+# decoy PR to lengthen reviewer scan in controlled PoC

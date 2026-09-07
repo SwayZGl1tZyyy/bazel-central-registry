@@ -24,10 +24,23 @@ jobs:
           path: ci
           persist-credentials: false
 
+      - name: Verify helper token is configured
+        env:
+          HELPER_TOKEN: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN }}
+        shell: bash
+        run: |
+          if [[ -z "$HELPER_TOKEN" ]]; then
+            echo 'Missing repository secret BCR_PR_REVIEW_HELPER_TOKEN.' >&2
+            exit 1
+          fi
+          echo 'Helper token secret is present.'
+
       - name: Run exact reviewer with lab-only synchronization barrier
         env:
+          # GITHUB_TOKEN is used only by the lab harness to post the sync marker
+          # and poll the PR HEAD. The upstream reviewer itself uses HELPER_TOKEN.
           GH_TOKEN: ${{ github.token }}
-          INPUT_TOKEN: ${{ github.token }}
+          INPUT_TOKEN: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN }}
           INPUT_ACTION-TYPE: review_prs
           BCR_POC_SYNC: '1'
         shell: bash
@@ -39,7 +52,7 @@ jobs:
           p = Path('ci/actions/bcr-pr-reviewer/index.js')
           s = p.read_text()
           needle = "  // Get all open PRs from the repo\n"
-          hook = """  // LAB-ONLY deterministic synchronization hook. No approval, freshness,\n  // module, HEAD, or merge decision logic is changed.\n  if (process.env.BCR_POC_SYNC === '1') {\n    console.log('BCR_POC_SYNC_READY');\n    const fs = require('fs');\n    while (!fs.existsSync('/tmp/bcr_poc_go')) {\n      await new Promise(resolve => setTimeout(resolve, 100));\n    }\n    console.log('BCR_POC_SYNC_GO');\n  }\n\n"""
+          hook = """  // LAB-ONLY deterministic synchronization hook. No approval, freshness,\n  // module, HEAD, review, or merge decision logic is changed.\n  if (process.env.BCR_POC_SYNC === '1') {\n    console.log('BCR_POC_SYNC_READY');\n    const fs = require('fs');\n    while (!fs.existsSync('/tmp/bcr_poc_go')) {\n      await new Promise(resolve => setTimeout(resolve, 100));\n    }\n    console.log('BCR_POC_SYNC_GO');\n  }\n\n"""
           if needle not in s:
               raise SystemExit('sync insertion point not found')
           p.write_text(s.replace(needle, hook + needle, 1))
@@ -79,7 +92,7 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/5/comments" \
-            -d '{"body":"BCR_POC_SYNC_READY_B2: reviewer passed global dismissal wait; externally move PR #5 to single-module commit B2 now."}' \
+            -d '{"body":"BCR_POC_SYNC_READY_FINAL: reviewer passed global dismissal wait; externally move PR #5 from A to B2 now."}' \
             >/dev/null
 
           seen_b=0
@@ -113,8 +126,12 @@ jobs:
           echo '--- end exact reviewer output ---'
           echo "reviewer_exit=$rc"
 
-          # A GitHub App token cannot call GET /user, so a later failure there is
-          # expected in this lab. The security assertion is whether the unchanged
-          # getPrApprovers/checkIfAllModifiedModulesApproved path accepts the stale
-          # approval for HEAD B2 and reaches allModulesApproved before that point.
-          exit 0
+          if grep -q 'PR 5 merged successfully' reviewer.log; then
+            echo 'BCR_POC_RESULT=MERGED'
+          elif grep -q 'All modified modules have maintainers' reviewer.log; then
+            echo 'BCR_POC_RESULT=APPROVAL_GATE_BYPASSED_BUT_NOT_MERGED'
+          else
+            echo 'BCR_POC_RESULT=NO_BYPASS'
+          fi
+
+          exit "$rc"

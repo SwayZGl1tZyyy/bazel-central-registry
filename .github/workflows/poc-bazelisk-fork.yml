@@ -22,8 +22,9 @@ jobs:
 
       - name: Prove BCR review exemption with the real validator method
         run: |
-          git fetch origin main --depth=1
-          git show FETCH_HEAD:modules/glu/9.0.3/presubmit.yml > /tmp/glu-baseline.yml
+          curl -fsSL \
+            https://raw.githubusercontent.com/bazelbuild/bazel-central-registry/main/modules/glu/9.0.3/presubmit.yml \
+            -o /tmp/glu-upstream-baseline.yml
 
           python3 - <<'PY'
           import importlib.util
@@ -41,7 +42,7 @@ jobs:
 
           class Snapshot:
               def presubmit_yml_lines(self):
-                  return pathlib.Path('/tmp/glu-baseline.yml').read_text().splitlines(True)
+                  return pathlib.Path('/tmp/glu-upstream-baseline.yml').read_text().splitlines(True)
 
           class Upstream:
               def get_latest_module_version(self, module_name):

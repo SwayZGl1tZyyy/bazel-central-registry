@@ -1,0 +1,2 @@
+This file exists only in commit B.
+If the BCR reviewer accepts the stale maintainer approval from commit A while HEAD is B, the approval freshness check is bypassed.

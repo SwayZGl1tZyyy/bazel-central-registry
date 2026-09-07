@@ -42,7 +42,7 @@ jobs:
           # GITHUB_TOKEN is used only by the lab harness for the sync marker and
           # HEAD polling. The upstream reviewer itself uses HELPER_TOKEN.
           GH_TOKEN: ${{ github.token }}
-          INPUT_TOKEN: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN }}
+          INPUT_TOKEN: ${{ secrets.BCR_TEST_TOKEN }}
           INPUT_ACTION-TYPE: review_prs
           BCR_POC_SYNC: '1'
           PR_NUMBER: ${{ inputs.pr_number }}

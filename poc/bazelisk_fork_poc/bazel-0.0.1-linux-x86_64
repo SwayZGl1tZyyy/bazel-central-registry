@@ -1,0 +1,4 @@
+#!/bin/sh
+printf '%s\n' 'BCR_CUSTOM_BAZEL_EXECUTED'
+printf '%s\n' "argv: $*"
+exit 0

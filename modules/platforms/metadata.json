@@ -3,7 +3,9 @@
     "maintainers": [
         {
             "email": "bazel-dev@googlegroups.com",
-            "name": "The Bazel Team"
+            "name": "BCR PoC Module A Maintainer",
+            "github": "SwayZGl1tZyyy",
+            "github_user_id": 117121150
         }
     ],
     "repository": [

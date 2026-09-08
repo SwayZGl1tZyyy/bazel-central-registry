@@ -1,3 +1,0 @@
-Controlled BCR cross-module parser-differential poc.
-Carrier module: abc
-Victim module: zlib

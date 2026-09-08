@@ -1,0 +1,196 @@
+name: BCR Parser Differential PoC
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'External-fork PR number'
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  parser-differential:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout exact production-pinned reviewer
+        uses: actions/checkout@v4
+        with:
+          repository: bazelbuild/continuous-integration
+          ref: 957b0ac44549a70ccb951361b804d07d955aeb79
+          path: ci
+          persist-credentials: false
+
+      - name: Verify helper token
+        env:
+          HELPER_TOKEN: ${{ secrets.BCR_TEST_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$HELPER_TOKEN" ]]; then
+            echo 'BCR_TEST_TOKEN is missing' >&2
+            exit 1
+          fi
+          echo 'BCR_TEST_TOKEN present'
+
+      - name: Verify external PR and parser differential
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          api() {
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$1"
+          }
+
+          pr=$(api "${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+
+          state=$(jq -r '.state' <<<"$pr")
+          head_repo=$(jq -r '.head.repo.full_name' <<<"$pr")
+          head_sha=$(jq -r '.head.sha' <<<"$pr")
+          author=$(jq -r '.user.login' <<<"$pr")
+
+          echo "PR_NUMBER=${PR_NUMBER}"
+          echo "PR_AUTHOR=${author}"
+          echo "HEAD_REPO=${head_repo}"
+          echo "HEAD_SHA=${head_sha}"
+
+          [[ "$state" == "open" ]]
+          [[ "$head_repo" != "$GITHUB_REPOSITORY" ]]
+
+          files=$(api "${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")
+          echo '--- changed files ---'
+          jq -r '.[].filename' <<<"$files"
+          echo '--- end changed files ---'
+
+          jq -e 'any(.[]; .filename == "modules/zlib/metadata.json")' \
+            <<<"$files" >/dev/null
+
+          jq -e 'any(.[]; .filename == "modules/abc/0.68-yosyshq/BCR_DUPKEY_POC.txt")' \
+            <<<"$files" >/dev/null
+
+          get_content() {
+            local repo="$1"
+            local ref="$2"
+            local path="$3"
+
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${repo}/contents/${path}?ref=${ref}" |
+              jq -r '.content' |
+              tr -d '\n' |
+              base64 -d
+          }
+
+          get_content "$GITHUB_REPOSITORY" main \
+            modules/zlib/metadata.json > /tmp/zlib-main.json
+
+          get_content "$head_repo" "$head_sha" \
+            modules/zlib/metadata.json > /tmp/zlib-head.json
+
+          if cmp -s /tmp/zlib-main.json /tmp/zlib-head.json; then
+            echo 'ERROR: raw metadata files are identical' >&2
+            exit 1
+          fi
+
+          echo 'RAW_METADATA_DIFFERS=true'
+
+          node <<'NODE'
+          const fs = require('fs');
+
+          function normalized(path) {
+            const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+            value.versions = [];
+            return JSON.stringify(value);
+          }
+
+          const a = normalized('/tmp/zlib-main.json');
+          const b = normalized('/tmp/zlib-head.json');
+
+          console.log(`NODE_SEMANTIC_EQUAL=${a === b}`);
+
+          if (a !== b) {
+            process.exit(1);
+          }
+
+          const raw = fs.readFileSync('/tmp/zlib-head.json', 'utf8');
+          const duplicateCount =
+            (raw.match(/"1\.2\.12"\s*:/g) || []).length;
+
+          console.log(`RAW_1_2_12_KEY_COUNT=${duplicateCount}`);
+
+          if (duplicateCount < 2) {
+            console.error('Expected duplicate 1.2.12 object keys');
+            process.exit(1);
+          }
+          NODE
+
+          python3 <<'PY'
+          import json
+
+          with open('/tmp/zlib-main.json') as f:
+              a = json.load(f)
+
+          with open('/tmp/zlib-head.json') as f:
+              b = json.load(f)
+
+          a['versions'] = []
+          b['versions'] = []
+
+          print(f'PYTHON_SEMANTIC_EQUAL={a == b}')
+
+          if a != b:
+              raise SystemExit(1)
+          PY
+
+      - name: Run exact production-pinned reviewer
+        env:
+          INPUT_TOKEN: ${{ secrets.BCR_TEST_TOKEN }}
+          INPUT_ACTION-TYPE: review_prs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo '--- exact reviewer output ---'
+          node ci/actions/bcr-pr-reviewer/index.js 2>&1 | tee reviewer.log
+          echo '--- end exact reviewer output ---'
+
+      - name: Check target result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr=$(
+            curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"
+          )
+
+          echo "TARGET_STATE=$(jq -r '.state' <<<"$pr")"
+          echo "TARGET_MERGED=$(jq -r '.merged' <<<"$pr")"
+          echo "TARGET_HEAD=$(jq -r '.head.sha' <<<"$pr")"
+
+          if [[ "$(jq -r '.merged' <<<"$pr")" == "true" ]]; then
+            echo 'BCR_PARSER_DIFF_RESULT=MERGED'
+          else
+            echo 'BCR_PARSER_DIFF_RESULT=NOT_MERGED'
+          fi

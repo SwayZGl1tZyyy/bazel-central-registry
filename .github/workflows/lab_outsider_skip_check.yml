@@ -103,7 +103,11 @@ jobs:
       - name: Run exact production skip_check action
         uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@957b0ac44549a70ccb951361b804d07d955aeb79
         with:
-          token: ${{ github.token }}
+          # LAB ONLY:
+          # Production uses BCR_PR_REVIEW_HELPER_TOKEN.
+          # This controlled fork uses the pre-existing BCR_TEST_TOKEN_V2.
+          # No production authorization/action logic is modified.
+          token: ${{ secrets.BCR_TEST_TOKEN_V2 }}
           action-type: skip_check
 
       - name: Verify privileged label was created

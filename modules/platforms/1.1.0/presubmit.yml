@@ -18,3 +18,5 @@ tasks:
     build_targets:
     - '@platforms//...'
 
+
+# Controlled BCR cross-module authorization PoC

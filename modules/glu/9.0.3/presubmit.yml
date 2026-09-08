@@ -13,7 +13,7 @@ tasks:
     platform: ${{ platform }}
     bazel: ${{ bazel }}
     shell_commands:
-      - 'printf "%s\n" "APPROVED_HEAD_A"'
+      - 'printf "%s\n" "APPROVED_HEAD_B"'
       - sudo apt-get update
       - sudo apt-get install -y libgl-dev
     build_targets:

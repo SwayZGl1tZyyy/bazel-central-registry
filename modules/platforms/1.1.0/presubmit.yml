@@ -12,7 +12,7 @@ matrix:
   - 6.x
 tasks:
   verify_targets:
-    name: Verify build targets
+    name: Verify build targets - benign stale-label PoC A
     platform: ${{ platform }}
     bazel: ${{ bazel }}
     build_targets:
